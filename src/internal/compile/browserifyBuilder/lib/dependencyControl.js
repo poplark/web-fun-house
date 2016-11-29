@@ -13,10 +13,12 @@ var inited = false;
 var fileCache, packageInfo;
 
 // Input Data
-var depsMap, i18nModuleNameSet, pk2localeModule, packageSplitPointMap, localeDepsMap;
+var depsMap, i18nModuleNameSet, pk2localeModule;
+var fileSplitPointMap;
+
 var resolvedPath2Module; // resolved absolute main path -> module name
 // Output Data
-var packageDepsGraph; // {entries: {}, localeEntries: {}, splitPoints: {}} by createEntryPackageDepGraph()
+var packageDepsGraph; // {entries: {}, splitPoints: {}} by createEntryPackageDepGraph()
 var bundleDepsGraph; // Entry package -> depeneded bundles, by createEntryBundleDepGraph()
 var splitPointDepsGraph; // Split point package -> depeneded bundles,by createEntryBundleDepGraph()
 var localeBundlesDepsGraph; // by createEntryBundleDepGraph()
@@ -48,18 +50,11 @@ Object.defineProperties(exports, {
 			return depsMap;
 		}
 	},
-	localeDepsMap: {
+	fileSplitPointMap: {
 		configurable: true,
 		enumerable: true,
 		get: function() {
-			return localeDepsMap;
-		}
-	},
-	packageSplitPointMap: {
-		configurable: true,
-		enumerable: true,
-		get: function() {
-			return packageSplitPointMap;
+			return fileSplitPointMap;
 		}
 	},
 });
@@ -114,9 +109,6 @@ function initI18nBundleInfo(bundleInfoCache) {
 	if (!_.has(bundleInfoCache, 'i18nModuleNameSet')) {
 		bundleInfoCache.i18nModuleNameSet = {};
 	}
-	if (!_.has(bundleInfoCache, 'localeDepsMap')) {
-		bundleInfoCache.localeDepsMap = {};
-	}
 	// package to locale module map Object.<{string} name, Object.<{string} locale, Object>>
 	if (!_.has(bundleInfoCache, 'pk2localeModule')) {
 		bundleInfoCache.pk2localeModule = {};
@@ -126,8 +118,7 @@ function initI18nBundleInfo(bundleInfoCache) {
 	}
 	i18nModuleNameSet = bundleInfoCache.i18nModuleNameSet;
 	pk2localeModule = bundleInfoCache.pk2localeModule;
-	localeDepsMap = bundleInfoCache.localeDepsMap;
-	packageSplitPointMap = bundleInfoCache.splitPointMap;
+	fileSplitPointMap = bundleInfoCache.splitPointMap;
 }
 
 function updatePack2localeModule(map) {
@@ -193,14 +184,6 @@ function createEntryPackageDepGraph() {
 			var entryDepsSet = packageDepsGraph.splitPoints[moduleName] = {};
 			walkContext.walkDeps(depsMap, moduleName, false, entryDepsSet, true);
 		});
-		//log.debug('packageInfo.localeEntryMap: ' + JSON.stringify(packageInfo.localeEntryMap, null, '  '));
-		_.forOwn(packageInfo.localeEntryMap, (entryMap, locale) => {
-			var result = packageDepsGraph.localeEntries[locale] = {};
-			_.forOwn(entryMap, function(pkInstance, moduleName) {
-				var entryDepsSet = result[moduleName] = {};
-				walkContext.walkDeps(localeDepsMap[locale], moduleName, false, entryDepsSet, true, null, depsMap);
-			});
-		});
 	} catch (e) {
 		log.error('walked dependecy path: %s', walkContext.depPath.join('\n\t-> '));
 		throw e;
@@ -213,7 +196,6 @@ function createEntryPackageDepGraph() {
 			}
 			return label;
 		}).print(log);
-	toPrintModel(packageDepsGraph.localeEntries, '------- Locale entry package -> package dependency ----------').print(log);
 	toPrintModel(packageDepsGraph.splitPoints, '------- Split Point -> package dependency ----------').print(log);
 	//printEntryDepsGraph(packageDepsGraph);
 	//log.debug('createEntryDepsData() packageDepsGraph = ' + JSON.stringify(packageDepsGraph, null, '  '))
@@ -260,9 +242,7 @@ function createEntryPackageDepGraph() {
 				// require id is a module name
 				var isOurs = isParentOurs && !api.packageUtils.is3rdParty(depsKey);
 				if (isOurs) {
-					var currPackage = (file && _.endsWith(file, '.js')) ?
-						api.findBrowserPackageByPath(file) : id;
-					var foundSplitPoint = _.has(packageSplitPointMap[currPackage], depsKey);
+					var foundSplitPoint = _.has(fileSplitPointMap[file], depsKey);
 					if (foundSplitPoint) {
 						log.info('Found split point: ' + depsKey);
 						entryDepsSet['sp:' + depsKey] = isParentOurs ? true : lastDirectDeps;
@@ -339,24 +319,6 @@ function createEntryBundleDepGraph() {
 					return;
 				}
 				var bundle, msg;
-				// if (_.has(i18nModuleNameSet, dep)) {
-				// 	// it is i18n module like "@dr/angularjs/i18n" which is not belong to any initial bundle
-				// 	api.config().locales.forEach(locale => {
-				// 		var graph = locDepBundleSet[locale];
-				// 		if (!graph) {
-				// 			graph = locDepBundleSet[locale] = {};
-				// 		}
-				// 		var localeModuleName = pk2localeModule[dep][locale];
-				// 		var localeDeps = packageDepsGraph.localeEntries[locale][localeModuleName];
-				// 		graph[packageInfo.localeEntryMap[locale][localeModuleName].bundle] = true;
-				// 		//log.debug('localeDeps: ' + JSON.stringify(localeDeps, null, '  '));
-				// 		_.keys(localeDeps).forEach(moduleName => {
-				// 			if (moduleMap[moduleName].bundle)
-				// 				graph[moduleMap[moduleName].bundle] = true;
-				// 		});
-				// 	});
-				// 	return;
-				// } else
 				if (_.startsWith(dep, 'sp:')) {
 					// split point
 					return;
@@ -397,12 +359,6 @@ function createEntryBundleDepGraph() {
 			_.forOwn(depBundleSet, function(whatever, bundle) {
 				PrintNode({content: chalk.magenta(bundle), parent: subNode1});
 			});
-			// _.forOwn(localeBundlesDepsGraph[entryOrSplitPoint], (depBundleSet, locale) => {
-			// 	var subNode2 = PrintNode({content: '{locale: ' + chalk.cyan(locale) + '}', parent: subNode1});
-			// 	_.forOwn(depBundleSet, function(whatever, bundle) {
-			// 		PrintNode({content: chalk.magenta(bundle), parent: subNode2});
-			// 	});
-			// });
 		});
 		return node;
 	}
