@@ -13,7 +13,7 @@ var inited = false;
 var fileCache, packageInfo;
 
 // Input Data
-var depsMap, i18nModuleNameSet, pk2localeModule;
+var depsMap, pk2localeModule;
 var fileSplitPointMap;
 
 var resolvedPath2Module; // resolved absolute main path -> module name
@@ -29,7 +29,6 @@ var nodeFileDirPattern = /^(?:\.\/|\.\.\/|\/)/; // to test if a required id is n
 exports.initAsync = initAsync;
 exports.browserifyDepsMap = browserifyDepsMap;
 exports.updatePack2localeModule = updatePack2localeModule;
-exports.addI18nModule = addI18nModule;
 exports.createEntryPackageDepGraph = createEntryPackageDepGraph;
 exports.createEntryBundleDepGraph = createEntryBundleDepGraph;
 // functions for retrieving result of loading information
@@ -73,7 +72,7 @@ function initAsync(_api, _packageInfo) {
 		fileCache.loadFromFile('depsMap.json'),
 	]).then(caches => {
 		depsMap = caches[1];
-		initI18nBundleInfo(caches[0]);
+		initDepGraphInfo(caches[0]);
 		resolvedPath2Module = _.get(caches[0], 'resolvedPath2Module');
 		if (!resolvedPath2Module)
 			resolvedPath2Module = caches[0].resolvedPath2Module = {};
@@ -105,10 +104,10 @@ function browserifyDepsMap(b, depsMap) {
 	}));
 }
 
-function initI18nBundleInfo(bundleInfoCache) {
-	if (!_.has(bundleInfoCache, 'i18nModuleNameSet')) {
-		bundleInfoCache.i18nModuleNameSet = {};
-	}
+/**
+ * Initialize dependency graph infomation from cache
+ */
+function initDepGraphInfo(bundleInfoCache) {
 	// package to locale module map Object.<{string} name, Object.<{string} locale, Object>>
 	if (!_.has(bundleInfoCache, 'pk2localeModule')) {
 		bundleInfoCache.pk2localeModule = {};
@@ -116,20 +115,12 @@ function initI18nBundleInfo(bundleInfoCache) {
 	if (!_.has(bundleInfoCache, 'splitPointMap')) {
 		bundleInfoCache.splitPointMap = {};
 	}
-	i18nModuleNameSet = bundleInfoCache.i18nModuleNameSet;
 	pk2localeModule = bundleInfoCache.pk2localeModule;
 	fileSplitPointMap = bundleInfoCache.splitPointMap;
 }
 
 function updatePack2localeModule(map) {
 	_.assign(pk2localeModule, map);
-}
-
-/**
- * @Deprecated
- */
-function addI18nModule(name) {
-	i18nModuleNameSet[name] = 1;
 }
 
 function DepsWalker() {
@@ -180,10 +171,11 @@ function createEntryPackageDepGraph() {
 			// API is always depended for entry package
 			walkContext.walkDeps(depsMap, '@dr-core/browserify-builder-api', false, entryDepsSet, true);
 		});
-		_.forOwn(packageInfo.splitPointMap, function(pkInstance, moduleName) {
-			var entryDepsSet = packageDepsGraph.splitPoints[moduleName] = {};
-			walkContext.walkDeps(depsMap, moduleName, false, entryDepsSet, true);
-		});
+		//Don't know why I need to do with packageInfo.splitPointMap, there is no this property
+		// _.forOwn(packageInfo.splitPointMap, function(pkInstance, moduleName) {
+		// 	var entryDepsSet = packageDepsGraph.splitPoints[moduleName] = {};
+		// 	walkContext.walkDeps(depsMap, moduleName, false, entryDepsSet, true);
+		// });
 	} catch (e) {
 		log.error('walked dependecy path: %s', walkContext.depPath.join('\n\t-> '));
 		throw e;
@@ -221,11 +213,10 @@ function createEntryPackageDepGraph() {
 				deps = parentDepsMap[file] || parentDepsMap[id];
 			}
 		}
-		if (!deps && !_.has(i18nModuleNameSet, id) && !_.has(packageInfo.urlPackageSet, id)) {
+		if (!deps && !_.has(packageInfo.urlPackageSet, id)) {
 			log.warn('id=%s', id);
 			log.warn(`depsMap=${JSON.stringify(depsMap, null, '  ')}`);
 			log.warn(`resolvedPath2Module=${JSON.stringify(resolvedPath2Module, null, ' ')}`);
-			log.warn('i18nModuleNameSet: %s', JSON.stringify(i18nModuleNameSet, null, '  '));
 			gutil.beep();
 			throw new Error('Can not walk dependency tree for: ' + this.depPath.join('\n\t-> ') +
 			', missing depended module or you may try rebuild all bundles');
@@ -240,6 +231,9 @@ function createEntryPackageDepGraph() {
 
 			if (isModuleName) {
 				// require id is a module name
+				if (_.has(entryDepsSet, depsKey)) {
+					return; // we don't want duplicate dependent package name
+				}
 				var isOurs = isParentOurs && !api.packageUtils.is3rdParty(depsKey);
 				if (isOurs) {
 					var foundSplitPoint = _.has(fileSplitPointMap[file], depsKey);
@@ -247,16 +241,15 @@ function createEntryPackageDepGraph() {
 						log.info('Found split point: ' + depsKey);
 						entryDepsSet['sp:' + depsKey] = isParentOurs ? true : lastDirectDeps;
 						entryDepsSet = packageDepsGraph.splitPoints[depsKey] = {};
+						self.walkDeps(depsMap, depsKey, depsValue, entryDepsSet,
+							true, null, parentDepsMap);
+					} else {
+						entryDepsSet[depsKey] = isParentOurs ? true : lastDirectDeps;
+						self.walkDeps(depsMap, depsKey, depsValue, entryDepsSet,
+							true, null, parentDepsMap);
 					}
-				}
-				if (_.has(entryDepsSet, depsKey)) {
-					return;
-				}
-				entryDepsSet[depsKey] = isParentOurs ? true : lastDirectDeps;
-				if (isOurs) {
-					self.walkDeps(depsMap, depsKey, depsValue, entryDepsSet,
-						true, null, parentDepsMap);
 				} else {
+					entryDepsSet[depsKey] = isParentOurs ? true : lastDirectDeps;
 					self.walkDeps(depsMap, depsKey, depsValue, entryDepsSet, false, depsKey, parentDepsMap);
 				}
 			} else {
