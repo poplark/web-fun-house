@@ -134,6 +134,7 @@ function _walkPackages(compileNodePath) {
 			translatable: !_.has(pkJson, 'dr.translatable') || _.get(pkJson, 'dr.translatable'),
 			dr: pkJson.dr,
 			compiler: pkJson.dr.compiler,
+			browser: pkJson.browser,
 			i18n: pkJson.dr ? (pkJson.dr.i18n ? pkJson.dr.i18n : null) : null
 		});
 		info.moduleMap[instance.longName] = instance;
@@ -259,7 +260,7 @@ function createPackageDirTree(packageInfo) {
 			tree.putData(moduleInstance.packagePath, moduleInstance);
 	});
 	packageInfo.dirTree = tree;
-	Object.getPrototypeOf(api).findPackageByFile = function(file) {
+	Object.getPrototypeOf(api).findPackageByFile = _.memoize(function(file) {
 		return tree.getAllData(file).pop();
-	};
+	});
 }

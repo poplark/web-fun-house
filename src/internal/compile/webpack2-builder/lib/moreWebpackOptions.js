@@ -7,6 +7,7 @@ var log = require('log4js').getLogger(api.packageName + '.' + Path.basename(__fi
 var noParseHelper = require('./noParseHelper');
 var Promise = require('bluebird');
 const http = require('http');
+const DependencyHelper = require('./utils/module-dep-helper');
 
 var writeFileAsync = Promise.promisify(fs.writeFile.bind(fs));
 //const HtmlWebpackPlugin = require('html-webpack-plugin');
@@ -31,16 +32,18 @@ exports.createParams = function(contextPath) {
 	var browserPropSet = {};
 	var file2EntryChunkName = {};
 	var webpackConfigEntry = {};
+	var entryComponents = [];
 
-	eachComponent(
+	_eachComponent(
 		function onComp(component) {
 			noparse4Package(component, noParse);
 			var browserSideConfigProp = _.get(component, ['dr', 'browserSideConfigProp']);
-			if (!Array.isArray(browserSideConfigProp))
+			if (browserSideConfigProp != null && !Array.isArray(browserSideConfigProp))
 				browserSideConfigProp = [browserSideConfigProp];
 			_.each(browserSideConfigProp, prop => browserPropSet[prop] = true);
 		},
 		function onEntryComp(entryComp) {
+			entryComponents.push(entryComp);
 			var bundle = chunk4package(entryComp);
 			if (_.has(bundleEntryCompsMap, bundle))
 				bundleEntryCompsMap[bundle].push(entryComp);
@@ -52,14 +55,14 @@ exports.createParams = function(contextPath) {
 
 			if (!_.has(entryChunkHtmls, bundle))
 				entryChunkHtmls[bundle] = [];
-			eachEntryPageForComp(entryComp.entryPages, entryComp, (packagePath, pageAbsPath, pathRelPath) => {
+			_eachEntryPageForComp(entryComp.entryPages, entryComp, (packagePath, pageAbsPath, pathRelPath) => {
 				entryChunkHtmls[bundle].push(pageAbsPath);
 				entryChunkHtmlAndView[bundle].push(pageAbsPath);
 			});
 
 			if (!_.has(entryChunkViews, bundle))
 				entryChunkViews[bundle] = [];
-			eachEntryPageForComp(entryComp.entryViews, entryComp, (packagePath, pageAbsPath, pathRelPath) => {
+			_eachEntryPageForComp(entryComp.entryViews, entryComp, (packagePath, pageAbsPath, pathRelPath) => {
 				entryViewSet[Path.relative(contextPath || process.cwd(), pageAbsPath)] = 1; // TODO: windows
 				entryChunkHtmlAndView[bundle].push(pageAbsPath);
 				entryChunkViews[bundle].push(pageAbsPath);
@@ -73,6 +76,8 @@ exports.createParams = function(contextPath) {
 	], prop => browserPropSet[prop] = 1);
 	_.each(api.config().browserSideConfigProp, prop => browserPropSet[prop] = 1);
 	_.forOwn(browserPropSet, (nothing, propPath) => _.set(legoConfig, propPath, _.get(api.config(), propPath)));
+	legoConfig.buildLocale = api.getBuildLocale();
+	log.info('DefinePlugin LEGO_CONFIG: ', legoConfig);
 
 	// write webpackConfig.entry
 	_.each(bundleEntryCompsMap, (moduleInfos, bundle) => {
@@ -83,7 +88,10 @@ exports.createParams = function(contextPath) {
 
 	return {
 		params: [webpackConfigEntry, noParse, file2EntryChunkName, entryChunkHtmlAndView, legoConfig, chunk4package,
-			sendlivereload, createEntryHtmlOutputPathPlugin(entryViewSet)],
+			sendlivereload, createEntryHtmlOutputPathPlugin(entryViewSet),
+			function() {
+				return entryHtmlCompilePlugin.call(this, new DependencyHelper(entryComponents));
+			}],
 
 		writeEntryFileAync: function(moduleRules) {
 			var allWritten = _.map(bundleEntryCompsMap, (moduleInfos, bundle) => {
@@ -151,14 +159,17 @@ function writeEntryFileForBundle(bundle, packages, htmlFiles, viewFiles, rules) 
 	.then(() => file);
 }
 
-function eachComponent(onComponent, onEntryComponent) {
+function _eachComponent(onComponent, onEntryComponent) {
 	_.each(api.packageInfo.allModules, function(component) {
 		onComponent(component);
-		if ((component.entryPages || component.entryViews) && component.compiler === 'webpack') {
+		if ((component.entryPages || component.entryViews) && component.browser/* && component.compiler === 'webpack'*/) {
 			if (api.argv.p != null) {
 				var runNames = [].concat(api.argv.p);
 				if (!_.includes(runNames, component.parsedName.name) && !_.includes(runNames, component.longName))
 					return;
+			}
+			if (!chunk4package(component)) {
+				log.warn('No chunk configured for entry component %s', component.longName);
 			}
 			onEntryComponent(component);
 		}
@@ -205,11 +216,38 @@ function createEntryHtmlOutputPathPlugin(entryViewSet) {
 }
 
 /**
+ * For CSS scope, add pacakge short name as class name to HTML element during server rendering
+ */
+function entryHtmlCompilePlugin(moduleDep) {
+	var map;
+	this.plugin('after-emit', function(compilation, callback) {
+		map = null;
+		log.info('clean listCommonJsDepMap');
+		callback();
+	});
+	this.plugin('compilation', function(compilation) {
+		compilation.plugin('multi-entry-html-compile-html', (file, $, cb) => {
+			var html = $('html');
+			var comp = api.findPackageByFile(file);
+			if (comp) {
+				html.addClass(comp.shortName);
+				if (!map)
+					map = moduleDep.listCommonJsDepMap(compilation);
+				for (let depComp of map.get(comp.longName)) {
+					html.addClass(depComp.shortName);
+				}
+			}
+			cb();
+		});
+	});
+}
+
+/**
  * @param onPage function(packagePath, pageAbsPath, pathRelPath)
  */
-function eachEntryPageForComp(pages, entryComp, onPage) {
+function _eachEntryPageForComp(pages, entryComp, onPage) {
 	_.each(pages, page => {
-		var pagePathInfo = resolvePagePath(page, entryComp, api.packageInfo.moduleMap);
+		var pagePathInfo = _resolvePagePath(page, entryComp, api.packageInfo.moduleMap);
 		glob.sync(pagePathInfo.abs).forEach(singlePath => {
 			onPage(pagePathInfo.package, singlePath, Path.relative(pagePathInfo.package, singlePath));
 		});
@@ -217,7 +255,7 @@ function eachEntryPageForComp(pages, entryComp, onPage) {
 }
 
 var npmPat = /npm:\/\/((?:@[^\/]+\/)?[^\/]+)\/(.*?$)/;
-function resolvePagePath(page, instance, moduleMap) {
+function _resolvePagePath(page, instance, moduleMap) {
 	if (page.startsWith('npm://')) {
 		var matched = npmPat.exec(page.replace(/\\/g, '/'));
 		var packageName = matched[1];
