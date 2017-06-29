@@ -9,9 +9,6 @@
 
 var _ = require('lodash');
 window._ = _;
-//var resolveUrl = require('@dr-core/browserify-builder-api/resolveUrl');
-// var bundleLoader = require('@dr-core/bundle-loader');
-// var loadCssBundles = bundleLoader.loadCssBundles;
 module.exports = BrowserApi;
 
 var packageNameReg = /(?:@([^\/]+)\/)?(\S+)/;
@@ -47,6 +44,7 @@ BrowserApi.prototype = {
 	buildLocale: LEGO_CONFIG.buildLocale,
 
 	entryPage: __drcpEntryPage,
+	entryPackage: window.__drcpEntryPackage,
 
 	config: function() {
 		return BrowserApi.prototype._config;

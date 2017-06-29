@@ -65,10 +65,15 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 						loader: 'babel-loader',
 						options: {
 							cacheDirectory: api.config.resolve('destDir', 'babel-cache' + (api.isDefaultLocale() ? '' : '/' + api.getBuildLocale())),
-							presets: ['es2015', 'stage-0'],
+							presets: [
+								['es2015', {modules: false}],
+								'react',
+								'stage-0'
+							],
 							plugins: [
 								'transform-decorators-legacy',
-								'transform-object-assign'
+								'transform-object-assign',
+								'syntax-dynamic-import'
 							]
 						}
 					}]
@@ -77,7 +82,7 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 					test: /\.jade$/,
 					use: [
 						{loader: 'html-loader', options: {attrs: 'img:src'}},
-						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href]
+						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href|srcset|ng-src]
 						{loader: '@dr/translate-generator'},
 						{loader: 'lib/jade-to-html-loader'}
 					]
@@ -86,7 +91,7 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 					test: /\.html$/,
 					use: [
 						{loader: 'html-loader', options: {attrs: 'img:src'}},
-						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href]
+						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href|srcset|ng-src]
 						{loader: '@dr/translate-generator'},
 						{loader: '@dr/template-builder'}
 					]
@@ -95,7 +100,7 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 					test: /\.md$/,
 					use: [
 						{loader: 'html-loader', options: {attrs: 'img:src'}},
-						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href]
+						{loader: 'lib/html-loader'}, // Replace keyward assets:// in *[src|href|srcset|ng-src]
 						{loader: 'lib/markdown-loader'}//,
 						//{loader: 'lib/debug-loader', options: {id: 0}}
 					]
@@ -117,7 +122,9 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 								options: cssAutoPrefixSetting
 							},
 							{loader: 'lib/css-url-assets-loader'},
-							{loader: 'lib/npmimport-css-loader'}
+							{loader: 'require-injector/css-loader', options: {
+								injector: api.browserInjector
+							}}
 						]
 					})
 				}, {
@@ -141,7 +148,9 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 								sourceMap: false,
 								//plugins: [new NpmImportPlugin()]
 							}},
-							{loader: 'lib/npmimport-css-loader'}
+							{loader: 'require-injector/css-loader', options: {
+								injector: api.browserInjector
+							}}
 						]
 					})
 				},
@@ -166,7 +175,9 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 								sourceMap: false,
 								//plugins: [new NpmImportPlugin()]
 							}},
-							{loader: 'lib/npmimport-css-loader'}
+							{loader: 'require-injector/css-loader', options: {
+								injector: api.browserInjector
+							}}
 						]
 					})
 				},
@@ -240,6 +251,7 @@ module.exports = function(webpackConfigEntry, noParse, file2EntryChunkName, entr
 
 			new webpack.DefinePlugin({
 				LEGO_CONFIG: JSON.stringify(legoConfig),
+				'LEGO_CONFIG.buildLocale': JSON.stringify(legoConfig.buildLocale),
 				'process.env.NODE_ENV': legoConfig.devMode ? '"development"' : '"production"'
 			}),
 
@@ -301,7 +313,6 @@ function testPackageDrProperty(fileSuffix, propertyKey, propertyValue) {
 		var component = api.findPackageByFile(file);
 		if (component) {
 			if (_.get(component, ['dr', propertyKey]) === propertyValue) {
-				log.debug('use babel on %s', file);
 				return true;
 			}
 		}
